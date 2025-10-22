@@ -689,6 +689,29 @@ class LoraLoaderModelOnly(LoraLoader):
     FUNCTION = "load_lora_model_only"
 
     def load_lora_model_only(self, model, lora_name, strength_model):
+        import copy
+        model_copy = copy.deepcopy(model)
+        if model_copy["init_lora"] == True:
+            model_copy["init_lora"] = False
+            model_copy["lora_name"] = []
+
+        if strength_model == 0:
+            return (model_copy, )
+        if model_copy.get("lora_name") is None:
+            model_copy["lora_name"] = []
+            model_copy["lora_name"].append(lora_name + "@" + str(strength_model))
+        else:
+            match_flag = False
+            for i, lora_id in enumerate(model_copy["lora_name"]):
+                if lora_id.startswith(lora_name):
+                    match_flag = True
+                    _, strength = lora_id.rsplit("@")
+                    strength = str(float(strength) + strength_model)
+                    model_copy["lora_name"][i] = lora_name + "@" + str(strength)
+                    break
+            if match_flag == False:
+                model_copy["lora_name"].append(lora_name + "@" + str(strength_model))
+        return (model_copy, )
         return (self.load_lora(model, None, lora_name, strength_model, 0)[0],)
 
 class VAELoader:
@@ -903,6 +926,9 @@ class ControlNetApplyAdvanced:
 class UNETLoader:
     @classmethod
     def INPUT_TYPES(s):
+        return {"required": { "unet_name": (["wan2.2_animate_14B_bf16.safetensors"], ),
+                              "weight_dtype": (["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"],)
+                             }}
         return {"required": { "unet_name": (folder_paths.get_filename_list("diffusion_models"), ),
                               "weight_dtype": (["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"],)
                              }}
@@ -912,6 +938,11 @@ class UNETLoader:
     CATEGORY = "advanced/loaders"
 
     def load_unet(self, unet_name, weight_dtype):
+        model = {
+            "unet_name": unet_name,
+            "init_lora": True,
+        }
+        return (model,)
         model_options = {}
         if weight_dtype == "fp8_e4m3fn":
             model_options["dtype"] = torch.float8_e4m3fn
@@ -1473,7 +1504,54 @@ class SetLatentNoiseMask:
         s["noise_mask"] = mask.reshape((-1, 1, mask.shape[-2], mask.shape[-1]))
         return (s,)
 
+from comfybridge.bizyair import remote_call
 def common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent, denoise=1.0, disable_noise=False, start_step=None, last_step=None, force_full_denoise=False):
+    faas_token = os.getenv("FAAS_TOKEN", "sk-llbmspexeycidkzadzwbqmzwqiuznytimogfifjicrviacyy")
+    headers = {
+        "Authorization": f"Bearer {faas_token}"
+        }
+
+    model_name = model["unet_name"]
+    base_url = os.getenv("WAN22_ANIMATE_BASE_URL", "http://localhost:8467")
+    # if "high" in model_name:
+    #     base_url = os.getenv("WAN22_HIGH_BASE_URL", "http://localhost:8193")
+    # elif "low" in model_name:
+    #     base_url = os.getenv("WAN22_LOW_BASE_URL", "http://localhost:8192")
+    # else:
+    #     raise ValueError(f"invalid model name {model_name}.")
+    endpoint_path = os.getenv("WAN22_ENDPOINT_PATH", "/rpc/wan22.animate.transformer")
+    frames = remote_call(
+            base_url=base_url,
+            endpoint_path=endpoint_path,
+            kwargs={
+                'model': model,
+                'seed': seed,
+                'steps': steps,
+                'cfg': cfg,
+                'sampler_name': sampler_name,
+                'scheduler': scheduler,
+                'positive_prompt_embeds': positive[0][0].contiguous(),
+                'negative_prompt_embeds': negative[0][0].contiguous(),
+                'penultimate_hidden_states': positive[0][1]["clip_vision_output"].penultimate_hidden_states.contiguous(),
+                "pose_video_latent": positive[0][1]["pose_video_latent"].contiguous(),
+                "face_video_pixels": positive[0][1]["face_video_pixels"].contiguous(),
+                "concat_latent_image": positive[0][1]["concat_latent_image"].contiguous(),
+                'concat_mask': positive[0][1]["concat_mask"].contiguous(),
+                # "audio_embed": positive[0][1].get("audio_embed", None).contiguous() if positive[0][1].get("audio_embed", None) is not None else None,
+                # "reference_latents": positive[0][1]["reference_latents"][0].contiguous() if positive[0][1].get("reference_latents", None) is not None else None,
+                # "reference_motion": positive[0][1].get("reference_motion", None).contiguous() if positive[0][1].get("reference_motion", None) is not None else None,
+                # "control_video": positive[0][1].get("control_video", None).contiguous() if positive[0][1].get("control_video", None) is not None else None,
+                'latent': latent,
+                'denoise': denoise,
+                'disable_noise': disable_noise,
+                'start_step': start_step,
+                'last_step': last_step,
+                'force_full_denoise': force_full_denoise,
+            },
+            headers=headers
+        )['data']['payload']
+    out = frames
+    return out
     latent_image = latent["samples"]
     latent_image = comfy.sample.fix_empty_latent_channels(model, latent_image)
 

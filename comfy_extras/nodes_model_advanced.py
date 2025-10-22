@@ -124,6 +124,9 @@ class ModelSamplingSD3:
     CATEGORY = "advanced/model"
 
     def patch(self, model, shift, multiplier=1000):
+        model["shift"] = shift
+        model["multiplier"] = multiplier
+        return (model, )
         m = model.clone()
 
         sampling_base = comfy.model_sampling.ModelSamplingDiscreteFlow

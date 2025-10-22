@@ -407,7 +407,7 @@ class AnimateWanModel(WanModel):
                  patch_size=(1, 2, 2),
                  text_len=512,
                  in_dim=16,
-                 dim=2048,
+                 dim=5120,
                  ffn_dim=8192,
                  freq_dim=256,
                  text_dim=4096,
