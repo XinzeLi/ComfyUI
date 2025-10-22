@@ -330,13 +330,21 @@ except:
 
 
 SUPPORT_FP8_OPS = args.supports_fp8_compute
+
+AMD_RDNA2_AND_OLDER_ARCH = ["gfx1030", "gfx1031", "gfx1010", "gfx1011", "gfx1012", "gfx906", "gfx900", "gfx803"]
+
 try:
     if is_amd():
+        arch = torch.cuda.get_device_properties(get_torch_device()).gcnArchName
+        if not (any((a in arch) for a in AMD_RDNA2_AND_OLDER_ARCH)):
+            torch.backends.cudnn.enabled = False  # Seems to improve things a lot on AMD
+            logging.info("Set: torch.backends.cudnn.enabled = False for better AMD performance.")
+
         try:
             rocm_version = tuple(map(int, str(torch.version.hip).split(".")[:2]))
         except:
             rocm_version = (6, -1)
-        arch = torch.cuda.get_device_properties(get_torch_device()).gcnArchName
+
         logging.info("AMD arch: {}".format(arch))
         logging.info("ROCm version: {}".format(rocm_version))
         if args.use_split_cross_attention == False and args.use_quad_cross_attention == False:
@@ -344,11 +352,11 @@ try:
                 if torch_version_numeric >= (2, 7):  # works on 2.6 but doesn't actually seem to improve much
                     if any((a in arch) for a in ["gfx90a", "gfx942", "gfx1100", "gfx1101", "gfx1151"]):  # TODO: more arches, TODO: gfx950
                         ENABLE_PYTORCH_ATTENTION = True
-#                if torch_version_numeric >= (2, 8):
-#                    if any((a in arch) for a in ["gfx1201"]):
-#                        ENABLE_PYTORCH_ATTENTION = True
+                if rocm_version >= (7, 0):
+                   if any((a in arch) for a in ["gfx1201"]):
+                       ENABLE_PYTORCH_ATTENTION = True
         if torch_version_numeric >= (2, 7) and rocm_version >= (6, 4):
-            if any((a in arch) for a in ["gfx1200", "gfx1201", "gfx942", "gfx950"]):  # TODO: more arches
+            if any((a in arch) for a in ["gfx1200", "gfx1201", "gfx950"]):  # TODO: more arches, "gfx942" gives error on pytorch nightly 2.10 1013 rocm7.0
                 SUPPORT_FP8_OPS = True
 
 except:
@@ -369,6 +377,9 @@ try:
         logging.info("Enabled fp16 accumulation.")
 except:
     pass
+
+if torch.cuda.is_available() and torch.backends.cudnn.is_available() and PerformanceFeature.AutoTune in args.fast:
+    torch.backends.cudnn.benchmark = True
 
 try:
     if torch_version_numeric >= (2, 5):
@@ -645,7 +656,9 @@ def load_models_gpu(models, memory_required=0, force_patch_weights=False, minimu
             if loaded_model.model.is_clone(current_loaded_models[i].model):
                 to_unload = [i] + to_unload
         for i in to_unload:
-            current_loaded_models.pop(i).model.detach(unpatch_all=False)
+            model_to_unload = current_loaded_models.pop(i)
+            model_to_unload.model.detach(unpatch_all=False)
+            model_to_unload.model_finalizer.detach()
 
     total_memory_required = {}
     for loaded_model in models_to_load:
@@ -923,11 +936,7 @@ def vae_dtype(device=None, allowed_dtypes=[]):
         if d == torch.float16 and should_use_fp16(device):
             return d
 
-        # NOTE: bfloat16 seems to work on AMD for the VAE but is extremely slow in some cases compared to fp32
-        # slowness still a problem on pytorch nightly 2.9.0.dev20250720+rocm6.4 tested on RDNA3
-        # also a problem on RDNA4 except fp32 is also slow there.
-        # This is due to large bf16 convolutions being extremely slow.
-        if d == torch.bfloat16 and ((not is_amd()) or amd_min_version(device, min_rdna_version=4)) and should_use_bf16(device):
+        if d == torch.bfloat16 and should_use_bf16(device):
             return d
 
     return torch.float32
@@ -1328,7 +1337,7 @@ def should_use_bf16(device=None, model_params=0, prioritize_performance=True, ma
 
     if is_amd():
         arch = torch.cuda.get_device_properties(device).gcnArchName
-        if any((a in arch) for a in ["gfx1030", "gfx1031", "gfx1010", "gfx1011", "gfx1012", "gfx906", "gfx900", "gfx803"]):  # RDNA2 and older don't support bf16
+        if any((a in arch) for a in AMD_RDNA2_AND_OLDER_ARCH):  # RDNA2 and older don't support bf16
             if manual_cast:
                 return True
             return False
