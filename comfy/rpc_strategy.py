@@ -82,11 +82,42 @@ class KJWanAnimateParameterStrategy(ModelParameterStrategy):
         }
 
 
+class KJWanS2VParameterStrategy(ModelParameterStrategy):
+    """Wan S2V sampler node"""
+    def get_parameters(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            'model': inputs.get("model"),
+            'seed': inputs.get("seed"),
+            'steps': inputs.get("steps"),
+            'cfg': inputs.get("cfg"),
+            'sampler_name': None,  # 固定为None
+            'scheduler': inputs.get("scheduler"),
+            'positive_prompt_embeds': inputs["text_embeds"]["prompt_embeds"][0].unsqueeze(0).contiguous(),
+            'negative_prompt_embeds': inputs["text_embeds"]["negative_prompt_embeds"][0].unsqueeze(0).contiguous(),
+            "audio_embed": inputs.get("s2v_audio_input").contiguous() if inputs.get("s2v_audio_input") is not None else None,
+            "s2v_motion_frames": inputs.get("s2v_motion_frames"),
+            "s2v_audio_scale": inputs.get("s2v_audio_scale") if inputs.get("s2v_audio_scale") is not None else 1.0,
+            "reference_motion": inputs.get("s2v_ref_motion").contiguous() if inputs.get("s2v_ref_motion") is not None else None,
+            "control_video": inputs.get("s2v_pose").contiguous() if inputs.get("s2v_pose") is not None else None,
+            "reference_latents": inputs.get("s2v_ref_latent").contiguous() if inputs.get("s2v_ref_latent") is not None else None,
+            'latent': {"samples": inputs["latent"].unsqueeze(0).contiguous()},
+            'denoise': None,  # 固定为None
+            'disable_noise': True,  # 固定为True
+            'start_step': inputs.get("start_step", 0),  # 默认从0开始
+            'last_step': inputs.get("end_step", inputs.get("steps")),  # 兼容end_step/steps
+            'force_full_denoise': inputs.get("add_noise_to_samples", False),
+            "enable_preprocess": False,  # 固定False
+            "enable_postprocess": False,  # 固定False
+            "shift": inputs.get("shift", 5.0),  # 默认值
+        }
+
+
 class ParameterStrategyFactory:
 
     _strategies = {
         "kj_wan_animate": KJWanAnimateParameterStrategy(),
         "wan_animate": WanAnimateParameterStrategy(),
+        "kj_wan_s2v": KJWanS2VParameterStrategy(),
         # 注册其他模型的策略...
         # "other_model": OtherModelParameterStrategy(),
     }
