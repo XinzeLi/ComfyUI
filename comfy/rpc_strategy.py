@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any
+import os
 
 
 class ModelParameterStrategy(ABC):
@@ -35,6 +36,41 @@ class WanAnimateParameterStrategy(ModelParameterStrategy):
             'disable_noise': inputs.get("disable_noise"),
             'start_step': inputs.get("start_step"),
             'last_step': inputs.get("last_step"),
+            'force_full_denoise': inputs.get("force_full_denoise"),
+        }
+
+
+class WanT2VParameterStrategy(ModelParameterStrategy):
+    """WanAnimate ksampler node"""
+    
+    def get_parameters(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        positive = inputs["positive"]
+        negative = inputs["negative"]
+        latent = inputs["latent"]
+        start_step = inputs.get("start_step")
+        model = inputs.get('model')
+
+        return {
+            'model': inputs.get("model"),
+            'seed': inputs.get("seed"),
+            'steps': inputs.get("steps"),
+            'cfg': inputs.get("cfg"),
+            'sampler_name': inputs.get("sampler_name"),
+            'scheduler': 'euler',
+            'positive_prompt_embeds': positive[0][0].contiguous(),
+            'negative_prompt_embeds': negative[0][0].contiguous(),
+            # 'penultimate_hidden_states': positive[0][1]["clip_vision_output"].penultimate_hidden_states.contiguous(),
+            # "pose_video_latent": positive[0][1]["pose_video_latent"].contiguous(),
+            # "face_video_pixels": positive[0][1]["face_video_pixels"].contiguous(),
+            # "concat_latent_image": positive[0][1]["concat_latent_image"].contiguous(),
+            # 'concat_mask': positive[0][1]["concat_mask"].contiguous(),
+            'latent': {"samples": latent["samples"].contiguous()},
+            'denoise': inputs.get("denoise"),
+            'disable_noise': inputs.get("disable_noise"),
+            'start_step': start_step,
+            'last_step': inputs.get("last_step"),
+            'enable_preprocess': False,
+            'enable_postprocess': False if ("high" in os.path.basename(model.get("base_path", None) or model.get("unet_name", None)).lower() or start_step == 0) else True,
             'force_full_denoise': inputs.get("force_full_denoise"),
         }
 
@@ -112,12 +148,87 @@ class KJWanS2VParameterStrategy(ModelParameterStrategy):
         }
 
 
+class KJWanI2VParameterStrategy(ModelParameterStrategy):
+    """WanI2V KJ node"""
+    
+    def get_parameters(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            'model': inputs.get("model"),
+            'seed': inputs.get("seed"),
+            'steps': inputs.get("steps"),
+            'cfg': inputs.get("cfg"),
+            'sampler_name': None,  # 固定为None
+            'scheduler': inputs.get("scheduler"),
+            'positive_prompt_embeds': inputs["text_embeds"]["prompt_embeds"][0].unsqueeze(0).contiguous(),
+            'negative_prompt_embeds': inputs["text_embeds"]["negative_prompt_embeds"][0].unsqueeze(0).contiguous(),
+            # 'penultimate_hidden_states': inputs["clip_fea"].contiguous(),
+            # "pose_video_latent": inputs["wananim_pose_latents"].contiguous(),
+            # "pose_strength": inputs.get("wananim_pose_strength", 1.0),  # 默认值
+            # "face_video_pixels": inputs["wananim_face_pixels"].contiguous(),
+            # "face_strength": inputs.get("wananim_face_strength", 1.0),  # 默认值
+            "concat_latent_image": inputs["image_cond"][4:].unsqueeze(0).contiguous(),
+            'concat_mask': (1.0 - inputs["image_cond"][:4]).unsqueeze(0).contiguous(),
+            'latent': {"samples": inputs["latent"].unsqueeze(0).contiguous()},
+            'denoise': None,  # 固定为None
+            'disable_noise': True,  # 固定为True
+            'start_step': inputs.get("start_step", 0),  # 默认从0开始
+            'last_step': inputs.get("end_step", inputs.get("steps")),  # 兼容end_step/steps
+            'force_full_denoise': inputs.get("add_noise_to_samples", False),
+            "enable_preprocess": False,  # 固定False
+            "enable_postprocess": False,  # 固定False
+            "shift": inputs.get("shift", 5.0),  # 默认值
+        }
+
+
+class KJWanInfiniteTalkParameterStrategy(ModelParameterStrategy):
+    """WanI2V KJ node"""
+    
+    def get_parameters(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        multitalk_audio_embeds = inputs.get("multitalk_audio_embeds", None)
+        latent_motion_frames = inputs.get("latent_motion_frames", None)
+        if multitalk_audio_embeds is not None:
+            multitalk_audio_embeds = multitalk_audio_embeds.contiguous()
+        if latent_motion_frames is not None:
+            latent_motion_frames = latent_motion_frames.contiguous()
+        return {
+            'model': inputs.get("model"),
+            'seed': inputs.get("seed"),
+            'steps': inputs.get("steps"),
+            'cfg': inputs.get("cfg"),
+            'sampler_name': None,  # 固定为None
+            'scheduler': inputs.get("scheduler"),
+            'positive_prompt_embeds': inputs["text_embeds"]["prompt_embeds"][0].unsqueeze(0).contiguous(),
+            'negative_prompt_embeds': inputs["text_embeds"]["negative_prompt_embeds"][0].unsqueeze(0).contiguous(),
+            'penultimate_hidden_states': inputs["clip_embeds"].contiguous(),
+            # "pose_video_latent": inputs["wananim_pose_latents"].contiguous(),
+            # "pose_strength": inputs.get("wananim_pose_strength", 1.0),  # 默认值
+            # "face_video_pixels": inputs["wananim_face_pixels"].contiguous(),
+            # "face_strength": inputs.get("wananim_face_strength", 1.0),  # 默认值
+            "multitalk_audio_embeds": multitalk_audio_embeds,
+            "latent_motion_frames": latent_motion_frames,
+            "concat_latent_image": inputs["image_cond"][4:].unsqueeze(0).contiguous(),
+            'concat_mask': (1.0 - inputs["image_cond"][:4]).unsqueeze(0).contiguous(),
+            'latent': {"samples": inputs["latent"].unsqueeze(0).contiguous()},
+            'denoise': None,  # 固定为None
+            'disable_noise': True,  # 固定为True
+            'start_step': inputs.get("start_step", 0),  # 默认从0开始
+            'last_step': inputs.get("end_step", inputs.get("steps")),  # 兼容end_step/steps
+            'force_full_denoise': inputs.get("add_noise_to_samples", False),
+            "enable_preprocess": False,  # 固定False
+            "enable_postprocess": False,  # 固定False
+            "shift": inputs.get("shift", 5.0),  # 默认值
+        }
+
+
 class ParameterStrategyFactory:
 
     _strategies = {
         "kj_wan_animate": KJWanAnimateParameterStrategy(),
         "wan_animate": WanAnimateParameterStrategy(),
         "kj_wan_s2v": KJWanS2VParameterStrategy(),
+        "kj_wan_i2v": KJWanI2VParameterStrategy(),
+        "kj_wan_infinitetalk": KJWanInfiniteTalkParameterStrategy(),
+        "wan_t2v": WanT2VParameterStrategy(),
         # 注册其他模型的策略...
         # "other_model": OtherModelParameterStrategy(),
     }
